@@ -14,91 +14,82 @@ import (
 
 var UploadDir = "./uploads"
 
-// UploadFile handles file uploads
 func UploadFile(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Upload handler hit")
 
-		err := r.ParseMultipartForm(50 << 20) // 50 MB
+		err := r.ParseMultipartForm(200 << 20)
 		if err != nil {
 			log.Println("ParseMultipartForm error:", err)
 			http.Error(w, "Invalid form data", http.StatusBadRequest)
 			return
 		}
 
-		file, header, err := r.FormFile("file")
-		if err != nil {
-			log.Println("FormFile error:", err)
-			http.Error(w, "File missing", http.StatusBadRequest)
-			return
-		}
-		defer file.Close()
-
-		content, err := io.ReadAll(file)
-		if err != nil {
-			log.Println("ReadAll error:", err)
-			http.Error(w, "Cannot read file", http.StatusInternalServerError)
-			return
-		}
-
-		hash := fmt.Sprintf("%x", sha256.Sum256(content))
-
-		// Check duplicate
-		var id int
-		var refCount int
-		err = db.QueryRow("SELECT id, reference_count FROM files WHERE sha256=$1", hash).Scan(&id, &refCount)
-		if err != nil && err != sql.ErrNoRows {
-			log.Println("DB select error:", err)
-			http.Error(w, "DB error", http.StatusInternalServerError)
+		files := r.MultipartForm.File["files"]
+		if len(files) == 0 {
+			http.Error(w, "No files uploaded", http.StatusBadRequest)
 			return
 		}
 
 		os.MkdirAll(UploadDir, os.ModePerm)
 
-		if err == sql.ErrNoRows {
-			destPath := filepath.Join(UploadDir, header.Filename)
-			tmpFile, err := os.Create(destPath)
-			if err != nil {
-				log.Println("Create file error:", err)
-				http.Error(w, "Cannot save file", http.StatusInternalServerError)
-				return
-			}
-			defer tmpFile.Close()
+		type UploadResult struct {
+			Filename string `json:"filename"`
+			Status   string `json:"status"`
+		}
+		var results []UploadResult
 
-			_, err = tmpFile.Write(content)
+		for _, header := range files {
+			file, err := header.Open()
 			if err != nil {
-				log.Println("Write file error:", err)
-				http.Error(w, "Cannot save file", http.StatusInternalServerError)
-				return
+				results = append(results, UploadResult{Filename: header.Filename, Status: "Failed to open"})
+				continue
+			}
+			defer file.Close()
+
+			content, err := io.ReadAll(file)
+			if err != nil {
+				results = append(results, UploadResult{Filename: header.Filename, Status: "Failed to read"})
+				continue
 			}
 
-			_, err = db.Exec(
-				`INSERT INTO files (filename, filepath, size, mime_type, sha256, reference_count) 
-                 VALUES ($1,$2,$3,$4,$5,$6)`,
-				header.Filename, destPath, header.Size, header.Header.Get("Content-Type"), hash, 1,
-			)
-			if err != nil {
-				log.Println("DB insert error:", err)
-				http.Error(w, "DB error", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			// Duplicate file, increment reference_count
-			_, err = db.Exec("UPDATE files SET reference_count = reference_count + 1 WHERE id=$1", id)
-			if err != nil {
-				log.Println("DB update error:", err)
-				http.Error(w, "DB error", http.StatusInternalServerError)
-				return
+			hash := fmt.Sprintf("%x", sha256.Sum256(content))
+
+			var id int
+			err = db.QueryRow("SELECT id FROM files WHERE sha256=$1", hash).Scan(&id)
+			if err == sql.ErrNoRows {
+
+				destPath := filepath.Join(UploadDir, header.Filename)
+				if err := os.WriteFile(destPath, content, 0644); err != nil {
+					results = append(results, UploadResult{Filename: header.Filename, Status: "Failed to save"})
+					continue
+				}
+
+				_, err := db.Exec(
+					`INSERT INTO files (filename, filepath, size, mime_type, sha256, reference_count) 
+                     VALUES ($1,$2,$3,$4,$5,$6)`,
+					header.Filename, destPath, header.Size, header.Header.Get("Content-Type"), hash, 1,
+				)
+				if err != nil {
+					results = append(results, UploadResult{Filename: header.Filename, Status: "DB error"})
+					continue
+				}
+
+				results = append(results, UploadResult{Filename: header.Filename, Status: "Uploaded"})
+			} else if err == nil {
+
+				_, _ = db.Exec("UPDATE files SET reference_count = reference_count + 1 WHERE id=$1", id)
+				results = append(results, UploadResult{Filename: header.Filename, Status: "Duplicate → count incremented"})
+			} else {
+				results = append(results, UploadResult{Filename: header.Filename, Status: "DB error"})
 			}
 		}
 
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("File uploaded successfully!"))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
 	}
 }
 
-// ListFiles returns JSON with download URLs
-// ListFiles returns JSON for frontend display (supports table/grid)
 func ListFiles(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Query("SELECT id, filename, filepath, size, uploaded_at FROM files ORDER BY uploaded_at DESC")
@@ -127,7 +118,7 @@ func ListFiles(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			f.UploadedAt = uploadedAt
-			// Construct download URL
+
 			f.DownloadURL = fmt.Sprintf("http://localhost:8080/download?id=%d", f.ID)
 			files = append(files, f)
 		}
@@ -137,7 +128,6 @@ func ListFiles(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// DownloadFile serves a file by its ID
 func DownloadFile(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
@@ -159,7 +149,6 @@ func DownloadFile(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// DeleteFile deletes a file by its ID
 func DeleteFile(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
@@ -168,7 +157,6 @@ func DeleteFile(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Get the file path first
 		var filepath string
 		err := db.QueryRow("SELECT filepath FROM files WHERE id=$1", id).Scan(&filepath)
 		if err != nil {
@@ -176,13 +164,11 @@ func DeleteFile(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Delete from disk
 		if err := os.Remove(filepath); err != nil {
 			http.Error(w, "Failed to delete file from server", http.StatusInternalServerError)
 			return
 		}
 
-		// Delete from database
 		_, err = db.Exec("DELETE FROM files WHERE id=$1", id)
 		if err != nil {
 			http.Error(w, "Failed to delete file from database", http.StatusInternalServerError)

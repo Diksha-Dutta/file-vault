@@ -1,4 +1,3 @@
-// src/components/UploadForm.tsx
 import { useState } from "react";
 
 interface UploadFormProps {
@@ -6,15 +5,26 @@ interface UploadFormProps {
 }
 
 const UploadForm = ({ onUpload }: UploadFormProps) => {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const handleFiles = (selected: FileList | null) => {
+    if (selected) {
+      setFiles((prev) => [...prev, ...Array.from(selected)]);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    handleFiles(e.dataTransfer.files);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) return alert("Please select a file!");
+    if (files.length === 0) return alert("Please select at least one file!");
 
     const formData = new FormData();
-    formData.append("file", file);
+    files.forEach((f) => formData.append("files", f));
 
     setLoading(true);
 
@@ -25,8 +35,9 @@ const UploadForm = ({ onUpload }: UploadFormProps) => {
       });
 
       if (res.ok) {
-        alert("File uploaded successfully!");
-        setFile(null);
+        const result = await res.json();
+        alert("Upload result:\n" + JSON.stringify(result, null, 2));
+        setFiles([]);
         onUpload();
       } else {
         const text = await res.text();
@@ -41,12 +52,35 @@ const UploadForm = ({ onUpload }: UploadFormProps) => {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row items-center gap-4 mb-6">
+    <form
+      onSubmit={handleSubmit}
+      className="flex flex-col gap-4 mb-6"
+    >
+     
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+        className="border-2 border-dashed border-gray-400 rounded-lg p-6 text-center cursor-pointer"
+      >
+        Drag & Drop files here or click below
+      </div>
+
       <input
         type="file"
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
-        className="border px-3 py-2 rounded w-full sm:w-auto"
+        multiple
+        onChange={(e) => handleFiles(e.target.files)}
+        className="border px-3 py-2 rounded"
       />
+
+    
+      {files.length > 0 && (
+        <ul className="text-sm">
+          {files.map((f, i) => (
+            <li key={i}>{f.name}</li>
+          ))}
+        </ul>
+      )}
+
       <button
         type="submit"
         disabled={loading}

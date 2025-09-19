@@ -25,8 +25,7 @@ func Connect() *sql.DB {
 	var db *sql.DB
 	var err error
 
-	// Retry logic
-	for i := 0; i < 10; i++ { // try 10 times
+	for i := 0; i < 10; i++ {
 		db, err = sql.Open("postgres", connStr)
 		if err != nil {
 			log.Printf("Attempt %d: failed to open DB: %v", i+1, err)
@@ -37,7 +36,7 @@ func Connect() *sql.DB {
 			return db
 		}
 
-		time.Sleep(5 * time.Second) // wait 5 seconds before retrying
+		time.Sleep(5 * time.Second)
 	}
 
 	log.Fatal("Could not connect to database after 10 attempts:", err)
