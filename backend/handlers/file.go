@@ -66,7 +66,7 @@ func UploadFile(db *sql.DB) http.HandlerFunc {
 				}
 
 				_, err := db.Exec(
-					`INSERT INTO files (filename, filepath, size, mime_type, sha256, reference_count) 
+					`INSERT INTO files (filename, filepath, size, mimetype, sha256, reference_count) 
                      VALUES ($1,$2,$3,$4,$5,$6)`,
 					header.Filename, destPath, header.Size, header.Header.Get("Content-Type"), hash, 1,
 				)

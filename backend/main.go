@@ -26,6 +26,10 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/signup", handlers.SignupHandler(database))
+	mux.HandleFunc("/login", handlers.LoginHandler(database))
+
 	mux.HandleFunc("/upload", handlers.UploadFile(database))
 	mux.HandleFunc("/files", handlers.ListFiles(database))
 	mux.HandleFunc("/download", handlers.DownloadFile(database))
