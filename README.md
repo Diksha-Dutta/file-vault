@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 ### Clone the repository
 ```bash
-git clone https://github.com/Diksha-Dutta/filevault.git
+git clone https://github.com/Diksha-Dutta/file-vault.git
 cd filevault
 docker-compose up --build
 ```
